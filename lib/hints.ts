@@ -1,6 +1,6 @@
 
+import { GoogleGenAI } from "@google/genai";
 import { Category } from '../types';
-import { fetchDynamicHint } from './gemini';
 
 const HINT_CACHE_KEY = 'impostor_hint_cache_v1';
 
@@ -40,7 +40,7 @@ export const getCategoryFallback = (category: Category): string => {
 };
 
 /**
- * Obtiene una pista, primero intentando Gemini, luego el mapping local, y finalmente el fallback por categoría.
+ * Obtiene una pista utilizando la SDK de Gemini directamente en el cliente.
  */
 export const getDynamicHint = async (word: string, category: Category, enabled: boolean): Promise<string | undefined> => {
   if (!enabled) return undefined;
@@ -54,11 +54,27 @@ export const getDynamicHint = async (word: string, category: Category, enabled: 
     if (cache[cacheKey]) return cache[cacheKey];
   } catch (e) {}
 
-  // 2. Intentar Gemini
-  const geminiHint = await fetchDynamicHint(word, category);
-  if (geminiHint) {
-    saveToCache(cacheKey, geminiHint);
-    return geminiHint;
+  // 2. Intentar Gemini directamente
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Palabra secreta: ${word}\nCategoría: ${category || 'sin categoría'}\nGenera una pista de UNA palabra relacionada de dificultad media: ni demasiado evidente ni demasiado difícil. Prohibido: devolver la palabra secreta, pistas de letras, o sinónimos exactos muy obvios. Devuelve SOLO la palabra.`,
+      config: {
+        systemInstruction: "Eres un generador de pistas para un juego social. Tu misión es ayudar al impostor dándole una palabra clave relacionada pero sutil. Devuelve SOLO 1 palabra en español. No uses frases, ni puntuación, ni comillas.",
+        temperature: 0.7,
+      },
+    });
+
+    const text = response.text || "";
+    const hint = text.trim().split(/\s+/)[0].replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "");
+
+    if (hint) {
+      saveToCache(cacheKey, hint);
+      return hint;
+    }
+  } catch (error) {
+    console.warn("Gemini Client Error, using fallbacks:", error);
   }
 
   // 3. Fallback a Mapping Local
